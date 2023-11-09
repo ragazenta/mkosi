@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - build
+  pull_request:
+    branches:
+      - build
+
+jobs:
+  mkosi-build:
+    runs-on: ubuntu-22.04
+    concurrency:
+      group: ${{ github.workflow }}-${{ matrix.distro }}-${{ matrix.format }}-${{ github.ref }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - debian
+          - fedora
+        format:
+          - disk
+
+    steps:
+    - uses: actions/checkout@v3
+    - uses: ./
+
+    # Make sure the latest changes from the pull request are used.
+    - name: Install
+      run: sudo ln -svf $PWD/bin/mkosi /usr/bin/mkosi
+      working-directory: ./
+
+    - name: Secret
+      run: |
+        tee mkosi.crt <<- EOF
+        ${{ secrets.MKOSI_CRT }}
+        EOF
+        tee mkosi.key <<- EOF
+        ${{ secrets.MKOSI_KEY }}
+        EOF
+        chmod 400 mkosi.crt
+        chmod 400 mkosi.key
+
+    - name: Configure ${{ matrix.distro }}/${{ matrix.format }}
+      run: |
+        tee mkosi.local.conf <<- EOF
+        [Distribution]
+        Distribution=${{ matrix.distro }}
+
+        [Output]
+        Format=${{ matrix.format }}
+        ImageId=${{ matrix.distro }}
+
+        [Content]
+        Bootloader=grub
+        BiosBootloader=none
+        ShimBootloader=signed
+        UnifiedKernelImages=no
+        Locale=en_US.UTF-8
+        LocaleMessages=en_US.UTF-8
+        Keymap=us
+        Timezone=Asia/Jakarta
+        Hostname=${{ matrix.distro }}
+
+        [Host]
+        ToolsTree=default
+        QemuKvm=no
+
+        [Validation]
+        SecureBoot=yes
+        EOF
+
+    - name: Build ${{ matrix.distro }}/${{ matrix.format }}
+      run: mkosi build
+
+    - name: Upload artifacts
+      if: matrix.format == 'disk'
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.distro }}_${{ matrix.format }}
+        path: mkosi.output/*.raw
